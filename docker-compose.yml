@@ -1,0 +1,46 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-storedb}
+      POSTGRES_USER: ${POSTGRES_USER:-storeuser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-this-long-password}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-storeuser} -d ${POSTGRES_DB:-storedb}"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+    restart: unless-stopped
+
+  api:
+    build: ./backend
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__Default: Host=db;Port=5432;Database=${POSTGRES_DB:-storedb};Username=${POSTGRES_USER:-storeuser};Password=${POSTGRES_PASSWORD:-change-this-long-password}
+      Admin__ApiKey: ${ADMIN_API_KEY:-replace-with-a-long-random-secret}
+      Integrations__PostEx__ApiUrl: ${POSTEX_API_URL:-}
+      Integrations__PostEx__ApiToken: ${POSTEX_API_TOKEN:-}
+      Integrations__PostEx__PickupAddressCode: ${POSTEX_PICKUP_ADDRESS_CODE:-}
+      Integrations__WhatsApp__PhoneNumberId: ${WHATSAPP_PHONE_NUMBER_ID:-}
+      Integrations__WhatsApp__AccessToken: ${WHATSAPP_ACCESS_TOKEN:-}
+      Integrations__WhatsApp__TemplateName: ${WHATSAPP_TEMPLATE_NAME:-order_confirmation}
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  web:
+    build: ./frontend
+    environment:
+      VITE_API_URL: http://localhost:8080
+    ports:
+      - "5173:5173"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
