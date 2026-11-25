@@ -41,6 +41,16 @@ ua,la,da=create(a,"Alpha")
 ub,lb,db=create(b,"Beta")
 call(a,"/owner/stores",want=401)
 print("PASS signup, duplicate registration, owner-only activation, pending access and separate accounts")
+token_path="/admin/couriers/postex/token"
+fake_token="qa-only-"+uid
+call(public,token_path,"PUT",{"token":fake_token},401)
+call(b,token_path,"PUT",{"token":"invalid token"},400)
+assert call(b,token_path,"PUT",{"token":fake_token})=={"configured":True}
+assert call(b,"/admin/settings")["postExConfigured"]
+assert not call(a,"/admin/settings")["postExConfigured"]
+assert fake_token not in json.dumps(call(b,"/admin/settings"))
+assert fake_token not in json.dumps(call(public,ub))
+print("PASS PostEx token is write-only, scoped to the signed-in merchant and excluded from storefront data")
 baseProduct=dict(name="Honey",category="Pantry",description="",price=100,stock=12,weightKg=2.5,shippingCharge=85,imageUrl="",promoLabel="10% off",promoKind="Percent",promoValue=10,version=0)
 p=call(a,"/admin/products","POST",baseProduct)
 assert p["salePrice"]==90

@@ -62,6 +62,8 @@ builder.Services.AddRateLimiter(o =>
 builder
     .Services.AddHttpClient("postex", c => c.Timeout = TimeSpan.FromSeconds(25))
     .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+builder.Services.AddDataProtection();
+builder.Services.AddSingleton<PostExCredentials>();
 builder.Services.AddHostedService<PostExWorker>();
 var app = builder.Build();
 using (var scope = app.Services.CreateScope())
@@ -265,6 +267,7 @@ app.MapGet(
             .Select(s => new { s.Name, s.Slug })
             .ToListAsync()
 );
+PostExCredentials.Map(admin);
 Catalog.Map(admin, store);
 Sales.Map(admin, store);
 app.Run();

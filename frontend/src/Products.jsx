@@ -1,3 +1,4 @@
+import { CoverPhoto } from "./ProductMedia";
 import { PromotionFields } from "./Promotions";
 import React, { useState } from "react";
 import { api, Field, Select, Message, useAction, money } from "./ui";
@@ -20,7 +21,9 @@ export default function Products({ products, reload }) {
     [name, find] = useState(""),
     [stock, filter] = useState("All");
   const a = useAction();
+  const [mediaBusy, setMediaBusy] = useState(false);
   function edit(row) {
+    setMediaBusy(false);
     set({ ...row });
     document
       .querySelector("#product-editor")
@@ -38,6 +41,7 @@ export default function Products({ products, reload }) {
   }
   async function save(e) {
     e.preventDefault();
+    if (mediaBusy) return;
     await a.run(async () => {
       const payload = { ...p };
       for (const k of [
@@ -108,9 +112,16 @@ export default function Products({ products, reload }) {
               min: 0,
               required: true,
             })}
-            {field("imageUrl", "Product image URL (HTTPS)", { type: "url" })}
+            <CoverPhoto
+              key={p.id || "new"}
+              value={p.imageUrl}
+              onBusy={setMediaBusy}
+              onChange={(imageUrl) =>
+                set((current) => ({ ...current, imageUrl }))
+              }
+            />
             <PromotionFields key={p.id || "new"} product={p} onChange={set} />
-            <button className="cta" disabled={a.busy}>
+            <button className="cta" disabled={a.busy || mediaBusy}>
               Save product
             </button>
             {p.id && (

@@ -22,6 +22,8 @@ class StoreDb(DbContextOptions<StoreDb> options) : DbContext(options)
 
 class Product
 {
+    public string Details { get; set; } = "";
+    public string[] Gallery { get; set; } = [];
     public int? ShopId { get; set; }
     public long Version { get; set; }
     public decimal WeightKg { get; set; } = 0.5m;
@@ -91,6 +93,8 @@ class OrderItem
 
 class Shop
 {
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string PostExSecret { get; set; } = "";
     public int Id { get; set; }
     public string Slug { get; set; } = "";
     public string Email { get; set; } = "";
@@ -100,6 +104,8 @@ class Shop
     public string BrowserTitle { get; set; } = "";
     public string Logo { get; set; } = "";
     public string Banner { get; set; } = "";
+    public string PromoVideo { get; set; } = "";
+    public string SocialLinksJson { get; set; } = "[]";
     public string Theme { get; set; } = "royal";
     public string Status { get; set; } = "Pending";
     public string Plan { get; set; } = "";
@@ -172,8 +178,12 @@ record Branding(
     string Logo,
     string Banner,
     string Theme,
-    long Version
+    long Version,
+    string? PromoVideo = null,
+    SocialLink[]? SocialLinks = null
 );
+
+record SocialLink(string Label, string Url);
 
 record ConfigEdit(ShopConfig Config, long Version);
 
@@ -189,7 +199,9 @@ record ProductInput(
     string PromoLabel,
     string PromoKind,
     decimal PromoValue,
-    long Version
+    long Version,
+    string? Details = null,
+    string[]? Gallery = null
 );
 
 record OrderLine(int ProductId, int Quantity);

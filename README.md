@@ -24,6 +24,22 @@ Open admin.html, sign in and choose **Promotions → Product to promote**. Choos
 
 For the three local pages, the storefront uses your saved changes on reload. To give GitHub testers your own catalog, use **Download GitHub storefront** in the admin dashboard, then replace the repository's index.html with the downloaded file. The export includes customer-facing branding, enabled payment instructions, shipping rules and current product offers. Browser-only test orders are stored per tester’s browser. Use sample customer and payment details for this mode.
 
+### Product photos and detail pages
+
+1. In **Admin → Product Addition**, click a product to edit it. Paste a public HTTPS image address into **Product image URL**, or use **Upload cover photo**. Wait for the preview and save the product. If a website blocks image embedding or the link opens a web page, upload the picture instead.
+2. Open **Admin → Product Details**, select the product and enter its full description. You can replace the cover here and add up to **eight additional photos**. Select several PNG, JPEG or WebP files at once, or add gallery URLs individually. Use the arrow buttons to reorder photos, then choose **Save product details**. Individual uploads can be up to 16 MB. The browser resizes larger originals before saving.
+3. On the store, click the product name or picture. The product has its own link, photo gallery, full description, price, stock and bag button. Reload the local storefront after editing. For a static GitHub store, export and publish the updated **index.html** after your changes. Uploaded photos travel with this export. Linked photos need their original image host to remain accessible.
+
+### Headings, home-page video and footer links
+
+In **Product Details**, place the cursor on a description line and choose **Heading** or **Subheading**. You can type over the selected text, preview the description and save. Existing plain-text descriptions keep their line breaks.
+
+In **Admin → Store**, upload an MP4 or WebM up to 8 MiB or paste a direct HTTPS video URL. A video-hosting page URL will not play as a video file. **Save branding** publishes the clip in the home-page banner. The video starts muted where the browser permits, has playback controls and uses the banner image as its poster and fallback. Removing the clip restores the image. A hosted video URL keeps the size of large storefront exports down.
+
+In the same Store form, use **Add social link** for each platform. Enter its display name and HTTPS profile link and save. The links appear in the customer footer. After local edits, export a fresh **index.html** to update GitHub Pages.
+
+Below the product details, **You may also like** links to up to four other in-stock items in the same store. Suggestions use product category, similar names, recently viewed categories in the current browser tab and the shopping bag. Other available products fill unused spots. Browsing history stays in the tab.
+
 ### Optional shared testing with the server
 
 To have all testers read live promotions and send orders to the merchant’s central order list, deploy the included server edition at an HTTPS origin reachable by testers. Approve the store and configure its products there. In the API environment, set Pages__Origin to the Pages origin (e.g. https://YOUR-ACCOUNT.github.io, without the repository path) and restart the API. In the published index.html, find the JSON element with id="connection-data" and set apiOrigin to the server origin and slug to the store’s assigned slug. Example:
@@ -104,9 +120,9 @@ With 5 kg included and PKR 50 per extra kg, products with shipping fees of PKR 8
 
 ### PostEx booking
 
-1. Obtain the merchant’s PostEx token and registered pickup code. Find the numeric Store ID on the Owner dashboard.
-2. Add `PostEx__Stores__42__Token='your-token'` to .env, replacing 42 with the actual ID. Run `docker compose up -d --force-recreate api`. Tokens stay in backend configuration. For managed hosting, supply the same environment key from your secret manager.
-3. In Courier Configuration, enable PostEx, enter the pickup code and select it as the default shipper before checkout. The customer’s phone must be a Pakistani mobile number for API booking.
+1. In the **server Admin → Courier Configuration → PostEx API token** panel, paste your merchant token and select **Save PostEx token**. The panel shows **Configured** and clears the field. To rotate the token, save its replacement there. The API encrypts each merchant’s credential. Back up the Data Protection key volume (appkeys) along with PostgreSQL.
+2. If you only have the double-click **admin.html** open, the same panel can generate a **private token file**. Enter the registered server merchant email and token, choose **Download private token file**, then move it unchanged to **private/postex/** on the server. The file contains the credential. Keep it private and outside your GitHub Pages repository. Compose mounts this folder into the API. Without Docker, set **PostEx__SecretDirectory** to its absolute path. The server first uses the credential saved via Admin, then the optional legacy environment variable **PostEx__Stores__42__Token** (replace 42 with the store ID), then the private file. A local HTML store cannot submit a live shipment.
+3. In Courier Configuration, enable PostEx, enter the registered pickup code and select PostEx as the default shipper before checkout. The customer’s phone must be a Pakistani mobile number for API booking.
 4. Open the order and choose **Book with PostEx**. For a prepaid order, verify receipt with the payment provider and mark the payment verified first. The worker submits a single shipment and records the returned tracking number. COD sends the order total for collection. Verified prepaid orders send zero.
 5. If a request times out, returns an ambiguous response, or the process stops during submission, inspect the merchant portal using reference `NW-{store ID}-{order ID}`. Record the existing tracking number, or confirm that no booking exists before retrying. An interrupted send becomes eligible for manual reconciliation after two minutes.
 

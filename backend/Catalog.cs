@@ -9,6 +9,10 @@ static class Catalog
             s.BrowserTitle,
             s.Logo,
             s.Banner,
+            s.PromoVideo,
+            socialLinks = System.Text.Json.JsonSerializer.Deserialize<SocialLink[]>(
+                s.SocialLinksJson
+            ),
             s.Theme,
             s.Slug,
         };
@@ -17,12 +21,13 @@ static class Catalog
     {
         admin.MapGet(
             "/settings",
-            (HttpContext ctx) =>
+            (HttpContext ctx, PostExCredentials credentials) =>
             {
                 var s = Access.Shop(ctx);
                 return new
                 {
                     brand = Brand(s),
+                    postExConfigured = credentials.Configured(s),
                     config = ShopConfig.Read(s),
                     version = s.SettingsVersion,
                     s.Id,
@@ -46,6 +51,30 @@ static class Catalog
                     || !Rules.Themes.Contains(input.Theme)
                 )
                     return Rules.Bad("Check the store name, title, images and theme.");
+                if (input.PromoVideo != null && !Rules.Video(input.PromoVideo))
+                    return Rules.Bad(
+                        "Use a public HTTPS video URL or upload an MP4 or WebM up to 8 MiB."
+                    );
+                if (input.SocialLinks != null)
+                {
+                    if (
+                        input.SocialLinks.Length > 12
+                        || input.SocialLinks.Any(x =>
+                            x == null
+                            || !Rules.Text(x.Label, 48)
+                            || !Rules.Text(x.Url, 2048)
+                            || !Rules.Https(x.Url)
+                        )
+                    )
+                        return Rules.Bad(
+                            "Enter a name and a public HTTPS URL for each social link (maximum 12)."
+                        );
+                    s.SocialLinksJson = System.Text.Json.JsonSerializer.Serialize(
+                        input.SocialLinks
+                    );
+                }
+                if (input.PromoVideo != null)
+                    s.PromoVideo = input.PromoVideo;
                 s.Name = input.Name.Trim();
                 s.BrowserTitle = input.BrowserTitle.Trim();
                 s.Logo = input.Logo;
@@ -129,6 +158,15 @@ static class Catalog
     static async Task<IResult> Save(int? id, ProductInput input, HttpContext ctx, StoreDb db)
     {
         if (
+            input.Details?.Length > 16000
+            || input.Gallery?.Length > 8
+            || input.Gallery?.Any(image => string.IsNullOrWhiteSpace(image) || !Rules.Image(image))
+                == true
+        )
+            return Rules.Bad(
+                "Use up to eight valid gallery photos and up to 16,000 characters of product details."
+            );
+        if (
             !Rules.Text(input.Name, 160)
             || !Rules.Text(input.Category, 100)
             || !Rules.Optional(input.Description, 2400)
@@ -168,6 +206,10 @@ static class Catalog
         p.WeightKg = input.WeightKg;
         p.ShippingCharge = input.ShippingCharge;
         p.ImageUrl = input.ImageUrl;
+        if (input.Details != null)
+            p.Details = input.Details.Trim();
+        if (input.Gallery != null)
+            p.Gallery = input.Gallery.Distinct().ToArray();
         p.PromoKind = input.PromoKind;
         p.PromoValue = input.PromoValue;
         p.PromoLabel = input.PromoKind == "None" ? "" : input.PromoLabel.Trim();

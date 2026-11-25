@@ -15,8 +15,8 @@ function App() {
     /^\/admin\/orders\/\d+$/.test(path)
   )
     return <AccountPortal role="admin" Dashboard={Admin} />;
-  if (/^\/store\/[a-z0-9-]+$/.test(path))
-    return <Store slug={path.split("/")[2]} />;
+  const shop = path.match(/^\/store\/([a-z0-9-]+)(?:\/products\/(\d+))?$/);
+  if (shop) return <Store slug={shop[1]} productId={shop[2]} />;
   return <Directory />;
 }
 createRoot(document.getElementById("root")).render(<App />);

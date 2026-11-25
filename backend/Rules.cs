@@ -36,15 +36,44 @@ static class Rules
     public static bool Https(string? s) =>
         Uri.TryCreate(s, UriKind.Absolute, out var u) && u.Scheme == "https" && u.UserInfo == "";
 
+    public static bool Video(string source)
+    {
+        if (source == "")
+            return true;
+        if (!source.StartsWith("data:", StringComparison.Ordinal))
+            return source.Length <= 8192 && Https(source);
+        var sep = source.IndexOf(',');
+        if (sep < 0 || source.Length > 11184840)
+            return false;
+        var type = source[..sep];
+        if (type is not ("data:video/mp4;base64" or "data:video/webm;base64"))
+            return false;
+        try
+        {
+            var bytes = Convert.FromBase64String(source[(sep + 1)..]);
+            if (bytes.Length > 8 * 1024 * 1024)
+                return false;
+            return type == "data:video/mp4;base64"
+                ? bytes.Length >= 12 && bytes.AsSpan(4, 4).SequenceEqual("ftyp"u8)
+                : bytes.AsSpan().StartsWith(new byte[] { 0x1a, 0x45, 0xdf, 0xa3 });
+        }
+        catch (FormatException)
+        {
+            return false;
+        }
+    }
+
     public static bool Image(string? s)
     {
         if (s == "")
             return true;
         if (s == null || s.Length > 1400000)
             return false;
+        if (!s.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+            return Https(s) && s.Length <= 8192;
         var sep = s.IndexOf(',');
         if (sep < 0)
-            return Https(s) && s.Length <= 2048;
+            return false;
         var kind = s[..sep];
         if (
             kind

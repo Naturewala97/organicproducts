@@ -17,6 +17,7 @@ services:
     build: ./backend
     env_file: .env
     environment:
+      PostEx__SecretDirectory: /run/naturwala/postex
       ASPNETCORE_URLS: http://+:8080
       Owner__Email: ${Owner__Email:?Set Owner__Email in .env}
       Owner__Password: ${Owner__Password:?Set Owner__Password in .env}
@@ -25,6 +26,7 @@ services:
       db:
         condition: service_healthy
     volumes:
+      - ./private/postex:/run/naturwala/postex:ro
       - appkeys:/root/.aspnet/DataProtection-Keys
     restart: unless-stopped
   web:

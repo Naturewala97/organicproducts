@@ -1,3 +1,5 @@
+import StoreBanner from "./StoreBanner";
+import ProductPage, { ProductPhoto } from "./ProductPage";
 import { link, logo, scrollToCatalog } from "./navigation";
 import React, { useEffect, useState } from "react";
 import {
@@ -74,10 +76,9 @@ export function Directory() {
     </>
   );
 }
-export default function Store({ slug }) {
+export default function Store({ slug, productId }) {
   const path = "/stores/" + encodeURIComponent(slug),
-    key =
-      "nw.bag." + (window.NW_LOCAL?.scope || location.pathname) + "." + slug,
+    key = "nw.bag." + (window.NW_LOCAL?.scope || "/store/" + slug) + "." + slug,
     receiptKey = key + ".receipt";
   const [data, set] = useState(null),
     [failure, fail] = useState(""),
@@ -250,105 +251,148 @@ export default function Store({ slug }) {
   return (
     <>
       <Header brand={brand}>
-        <a href="#catalog" onClick={scrollToCatalog}>
+        <a
+          href={productId ? link("/store/" + slug) : "#catalog"}
+          onClick={productId ? undefined : scrollToCatalog}
+        >
           Shop
         </a>
         <button onClick={() => open(true)}>Bag ({count})</button>
       </Header>
-      <section className="hero">
-        <div className="heroText">
-          <div className="eyebrow">{brand.name}</div>
-          <h1>
-            Good things.
-            <br />
-            <em>Better living.</em>
-          </h1>
-          <p>
-            Discover useful, well-designed essentials for your everyday life.
-          </p>
-          <a className="cta" href="#catalog" onClick={scrollToCatalog}>
-            Explore collection →
-          </a>
-        </div>
-        <div className="heroImg">
-          {brand.banner ? (
-            <img src={brand.banner} alt={brand.name + " store banner"} />
-          ) : (
-            <img
-              className="heroLogo"
-              src={brand.logo || logo}
-              alt={brand.name}
-            />
-          )}
-        </div>
-      </section>
-      <main className="wrap" id="catalog">
-        <div className="head">
-          <div>
-            <div className="eyebrow">THE COLLECTION</div>
-            <h2>Shop essentials</h2>
-          </div>
-          <input
-            className="search"
-            aria-label="Search products"
-            placeholder="Search products..."
-            value={search}
-            onChange={(e) => find(e.target.value)}
-          />
-        </div>
-        <div className="filters">
-          {["All", ...new Set(products.map((p) => p.category))].map((c) => (
-            <button
-              className={category === c ? "on" : ""}
-              key={c}
-              onClick={() => cat(c)}
-            >
-              {c}
-            </button>
-          ))}
-        </div>
-        <div className="grid">
-          {filtered.map((p) => (
-            <article className="product" key={p.id}>
-              <div className="photo">
-                <img
-                  src={p.imageUrl || brand.logo || logo}
-                  className={!p.imageUrl ? "placeholder" : ""}
-                  alt=""
-                />
+      {productId ? (
+        <ProductPage
+          key={productId}
+          product={products.find((p) => p.id === Number(productId))}
+          brand={brand}
+          slug={slug}
+          products={products}
+          historyKey={key + ".views"}
+          bag={bag.items}
+          quantity={bag.items[productId] || 0}
+          add={() => change(Number(productId), (bag.items[productId] || 0) + 1)}
+        />
+      ) : (
+        <>
+          <section className="hero">
+            <div className="heroText">
+              <div className="eyebrow">{brand.name}</div>
+              <h1>
+                Good things.
+                <br />
+                <em>Better living.</em>
+              </h1>
+              <p>
+                Discover useful, well-designed essentials for your everyday
+                life.
+              </p>
+              <a className="cta" href="#catalog" onClick={scrollToCatalog}>
+                Explore collection →
+              </a>
+            </div>
+            <div className="heroImg">
+              <StoreBanner brand={brand} />
+            </div>
+          </section>
+          <main className="wrap" id="catalog">
+            <div className="head">
+              <div>
+                <div className="eyebrow">THE COLLECTION</div>
+                <h2>Shop essentials</h2>
               </div>
-              <div className="info">
-                <div className="meta">
-                  <span>{p.category}</span>
-                  <span>
-                    {p.stock ? p.stock + " available" : "Out of stock"}
-                  </span>
-                </div>
-                <h3>{p.name}</h3>
-                <p>{p.description}</p>
-                {p.promoLabel && (
-                  <p>
-                    <span className="statusPill">{p.promoLabel}</span>{" "}
-                    <del>{money(p.price)}</del>
-                  </p>
-                )}
-                <strong>{money(p.salePrice)}</strong>
+              <input
+                className="search"
+                aria-label="Search products"
+                placeholder="Search products..."
+                value={search}
+                onChange={(e) => find(e.target.value)}
+              />
+            </div>
+            <div className="filters">
+              {["All", ...new Set(products.map((p) => p.category))].map((c) => (
                 <button
-                  className="add"
-                  aria-label={"Add " + p.name + " to bag"}
-                  disabled={p.stock <= (bag.items[p.id] || 0)}
-                  onClick={() => change(p.id, (bag.items[p.id] || 0) + 1)}
+                  className={category === c ? "on" : ""}
+                  key={c}
+                  onClick={() => cat(c)}
                 >
-                  +
+                  {c}
                 </button>
-              </div>
-            </article>
-          ))}
-        </div>
-        {!filtered.length && <p className="muted">No products found.</p>}
-      </main>
+              ))}
+            </div>
+            <div className="grid">
+              {filtered.map((p) => (
+                <article className="product" key={p.id}>
+                  <a
+                    className="photo"
+                    aria-label={"View " + p.name + " details"}
+                    href={link("/store/" + slug + "/products/" + p.id)}
+                  >
+                    <ProductPhoto
+                      sources={[
+                        p.imageUrl,
+                        ...(p.gallery || []),
+                        brand.logo,
+                        logo,
+                      ]}
+                      alt={p.name}
+                      className={
+                        !p.imageUrl && !p.gallery?.length ? "placeholder" : ""
+                      }
+                    />
+                  </a>
+                  <div className="info">
+                    <div className="meta">
+                      <span>{p.category}</span>
+                      <span>
+                        {p.stock ? p.stock + " available" : "Out of stock"}
+                      </span>
+                    </div>
+                    <h3>
+                      <a href={link("/store/" + slug + "/products/" + p.id)}>
+                        {p.name}
+                      </a>
+                    </h3>
+                    <p>{p.description}</p>
+                    {p.promoLabel && (
+                      <p>
+                        <span className="statusPill">{p.promoLabel}</span>{" "}
+                        <del>{money(p.price)}</del>
+                      </p>
+                    )}
+                    <strong>{money(p.salePrice)}</strong>
+                    <button
+                      className="add"
+                      aria-label={"Add " + p.name + " to bag"}
+                      disabled={p.stock <= (bag.items[p.id] || 0)}
+                      onClick={() => change(p.id, (bag.items[p.id] || 0) + 1)}
+                    >
+                      +
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+            {!filtered.length && <p className="muted">No products found.</p>}
+          </main>
+        </>
+      )}
       <footer className="foot">
         <b>{brand.name}</b>
+        {!!brand.socialLinks?.length && (
+          <nav aria-label="Social media">
+            {brand.socialLinks
+              .filter((x) => /^https:\/\//i.test(x.url))
+              .map((x, i) => (
+                <a
+                  key={i}
+                  href={x.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  {x.label}
+                </a>
+              ))}
+          </nav>
+        )}
       </footer>
       {drawer && (
         <div className="overlay" onClick={() => open(false)}>

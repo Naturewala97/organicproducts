@@ -1,6 +1,49 @@
 using System.Net;
 using System.Text.Json;
+using Microsoft.AspNetCore.DataProtection;
+using Microsoft.Extensions.Configuration;
 
+var directory = Directory.CreateTempSubdirectory("nw-postex-");
+try
+{
+    var config = new ConfigurationBuilder()
+        .AddInMemoryCollection(
+            new Dictionary<string, string?>
+            {
+                ["PostEx:Stores:9:Token"] = "legacy-fixture",
+                ["PostEx:SecretDirectory"] = directory.FullName,
+            }
+        )
+        .Build();
+    var vault = new PostExCredentials(new EphemeralDataProtectionProvider(), config);
+    var merchant = new Shop { Id = 9 };
+    Check(vault.Get(merchant) == "legacy-fixture");
+    vault.Set(merchant, "replacement-fixture");
+    Check(
+        merchant.PostExSecret != "replacement-fixture"
+            && vault.Get(merchant) == "replacement-fixture"
+    );
+    Check(!JsonSerializer.Serialize(merchant).Contains(merchant.PostExSecret));
+    try
+    {
+        vault.Get(new Shop { Id = 10, PostExSecret = merchant.PostExSecret });
+        throw new Exception("Cross-tenant token reuse");
+    }
+    catch (System.Security.Cryptography.CryptographicException) { }
+    var fileMerchant = new Shop { Id = 11, Email = "Merchant@Example.test" };
+    var digest = System.Security.Cryptography.SHA256.HashData("merchant@example.test"u8);
+    var filename = Convert.ToHexString(digest).ToLowerInvariant() + ".token";
+    await File.WriteAllTextAsync(Path.Combine(directory.FullName, filename), "private-file-token");
+    Check(vault.Configured(fileMerchant) && vault.Get(fileMerchant) == "private-file-token");
+    Check(!vault.Configured(new Shop { Id = 12, Email = "other@example.test" }));
+}
+finally
+{
+    directory.Delete(true);
+}
+Console.WriteLine(
+    "PASS token encryption, merchant binding, replacement, private file and legacy fallback"
+);
 var o = new Order
 {
     Id = 17,

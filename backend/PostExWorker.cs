@@ -6,13 +6,10 @@ using Microsoft.EntityFrameworkCore;
 class PostExWorker(
     IServiceScopeFactory scopes,
     IHttpClientFactory clients,
-    IConfiguration config,
+    PostExCredentials credentials,
     ILogger<PostExWorker> log
 ) : BackgroundService
 {
-    public static string? Token(IConfiguration config, int id) =>
-        config[$"PostEx:Stores:{id}:Token"];
-
     protected override async Task ExecuteAsync(CancellationToken stop)
     {
         while (!stop.IsCancellationRequested)
@@ -54,7 +51,27 @@ class PostExWorker(
             if (order == null)
                 return false;
             shop = await db.Shops.FindAsync(new object?[] { order.ShopId }, stop);
-            token = Token(config, shop!.Id);
+            if (shop is null)
+            {
+                order.Booking = "Review";
+                await db.SaveChangesAsync(stop);
+                await tx.CommitAsync(stop);
+                return true;
+            }
+            try
+            {
+                token = credentials.Get(shop);
+            }
+            catch (Exception e)
+                when (e
+                        is System.Security.Cryptography.CryptographicException
+                            or IOException
+                            or UnauthorizedAccessException
+                )
+            {
+                token = null;
+                log.LogWarning("PostEx credentials need attention for store {StoreId}.", shop.Id);
+            }
             courier = ShopConfig.Read(shop).Couriers.Find(c => c.Name == "PostEx" && c.Enabled);
             var send =
                 shop.Available

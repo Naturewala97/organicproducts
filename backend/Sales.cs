@@ -51,7 +51,7 @@ static class Sales
         );
         admin.MapPost(
             "/orders/{id:int}/book",
-            async (int id, HttpContext ctx, StoreDb db, IConfiguration cfg) =>
+            async (int id, HttpContext ctx, StoreDb db, PostExCredentials credentials) =>
             {
                 var s = Access.Shop(ctx);
                 var o = await Orders(ctx, db).SingleOrDefaultAsync(o => o.Id == id);
@@ -72,7 +72,7 @@ static class Sales
                     );
                 if (
                     !ShopConfig.Read(s).Couriers.Any(c => c.Name == "PostEx" && c.Enabled)
-                    || string.IsNullOrWhiteSpace(PostExWorker.Token(cfg, s.Id))
+                    || !credentials.Configured(s)
                 )
                     return Rules.Bad(
                         "Enable PostEx and configure the server token for this store."

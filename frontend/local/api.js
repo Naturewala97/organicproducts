@@ -81,6 +81,7 @@ function product(s, state, id, b, method, query) {
         ? list - cents(b.promoValue)
         : list;
   const p = {
+    ...(id ? s.products[index] : {}),
     ...b,
     id: id || state.nextProduct++,
     name: b.name.trim(),
@@ -132,6 +133,7 @@ function route(state, parts, query, method, b) {
       brand: s.brand,
       config: s.config,
       version: s.version,
+      adminEmail: s.email,
       id: s.id,
       plan: s.plan,
       expiresAt: s.expiresAt,
@@ -145,12 +147,33 @@ function route(state, parts, query, method, b) {
         !themes.some((t) => t.id === b.theme)
       )
         fail("Check the store name, title and theme.");
+      const links = b.socialLinks ?? s.brand.socialLinks ?? [];
+      if (
+        !Array.isArray(links) ||
+        links.length > 12 ||
+        links.some(
+          (x) => !text(x?.label, 48) || !text(x.url, 2048) || !isHttps(x.url),
+        )
+      )
+        fail("Enter a name and HTTPS URL for each social link.");
+      const video = b.promoVideo ?? s.brand.promoVideo ?? "";
+      if (
+        video &&
+        !(isHttps(video) && video.length <= 8192) &&
+        !(
+          video.length <= 11184840 &&
+          /^data:video\/(mp4|webm);base64,[A-Za-z0-9+/]+=*$/.test(video)
+        )
+      )
+        fail("Choose an MP4 or WebM file or a public HTTPS video URL.");
       s.name = b.name.trim();
       s.brand = {
         name: s.name,
         browserTitle: b.browserTitle,
         slug: s.slug,
         banner: b.banner,
+        socialLinks: links,
+        promoVideo: video,
         logo: b.logo,
         theme: b.theme,
       };

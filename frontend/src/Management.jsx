@@ -1,3 +1,4 @@
+import ProductConfiguration from "./ProductConfiguration";
 import {
   currentPath,
   currentTab,
@@ -18,6 +19,7 @@ import { Orders, Detail } from "./Orders";
 const tabs = {
   orders: "Orders Status",
   products: "Product Addition",
+  details: "Product Details",
   promotions: "Promotions",
   shipping: "Courier Configuration",
   payments: "Payment Configurations",
@@ -35,7 +37,7 @@ export function Admin({ settings, refresh, logout }) {
   const id = currentPath().match(/^\/admin\/orders\/(\d+)\/?$/)?.[1];
   useEffect(() => {
     if (id) return;
-    if (tab === "products" || tab === "promotions")
+    if (["products", "promotions", "details"].includes(tab))
       reloadProducts().catch((e) => a.setMessage(e.message));
     if (tab === "orders") reloadOrders().catch((e) => a.setMessage(e.message));
   }, [tab, id]);
@@ -105,6 +107,11 @@ export function Admin({ settings, refresh, logout }) {
             <Message text={a.message} />
             {tab === "products" ? (
               <Products products={products} reload={reloadProducts} />
+            ) : tab === "details" ? (
+              <ProductConfiguration
+                products={products}
+                reload={reloadProducts}
+              />
             ) : tab === "promotions" ? (
               <Promotions products={products} reload={reloadProducts} />
             ) : tab === "orders" ? (

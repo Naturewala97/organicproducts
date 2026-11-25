@@ -10,9 +10,10 @@ const subscribe = (fn) => {
 function App() {
   const path = React.useSyncExternalStore(subscribe, currentPath);
   if (path === "/store" && !window.NW_LOCAL.published) return <Directory />;
+  const match = path.match(/^\/store\/([a-z0-9-]+)(?:\/products\/(\d+))?$/);
   const slug = window.NW_LOCAL.published
     ? window.NW_LOCAL.slug
-    : path.match(/^\/store\/([a-z0-9-]+)$/)?.[1] || window.NW_LOCAL.slug;
-  return <Store key={slug} slug={slug} />;
+    : match?.[1] || window.NW_LOCAL.slug;
+  return <Store key={slug} slug={slug} productId={match?.[2]} />;
 }
 createRoot(document.getElementById("root")).render(<App />);

@@ -8,6 +8,8 @@ export function snapshot(view, revision) {
       "browserTitle",
       "logo",
       "banner",
+      "promoVideo",
+      "socialLinks",
       "theme",
     ]),
     shipping: pick(view.shipping, [
@@ -30,6 +32,8 @@ export function snapshot(view, revision) {
         "weightKg",
         "shippingCharge",
         "imageUrl",
+        "details",
+        "gallery",
         "promoKind",
         "promoValue",
         "promoLabel",
