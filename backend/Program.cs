@@ -1,163 +1,323 @@
-using Microsoft.EntityFrameworkCore;
-using Microsoft.AspNetCore.Mvc;
+using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
+using System.Threading.RateLimiting;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
+using Npgsql;
 
 var builder = WebApplication.CreateBuilder(args);
+var cfg = builder.Configuration;
+var ownerEmail = cfg["Owner:Email"]?.Trim().ToLowerInvariant();
+var ownerPassword = cfg["Owner:Password"];
+if (!Rules.Email(ownerEmail) || !Rules.Password(ownerPassword))
+    throw new InvalidOperationException(
+        "Configure Owner__Email and Owner__Password (12–128 characters)."
+    );
 builder.Services.AddDbContext<StoreDb>(o =>
-    o.UseNpgsql(builder.Configuration.GetConnectionString("Default") ??
-      "Host=localhost;Database=storedb;Username=storeuser;Password=storepass"));
-builder.Services.AddCors(o => o.AddDefaultPolicy(p =>
-    p.WithOrigins("http://localhost:5173").AllowAnyHeader().AllowAnyMethod()));
+    o.UseNpgsql(
+        cfg.GetConnectionString("Default")
+            ?? throw new InvalidOperationException("Set ConnectionStrings__Default.")
+    )
+);
+var pagesOrigin = cfg["Pages:Origin"]?.TrimEnd('/');
+if (!string.IsNullOrWhiteSpace(pagesOrigin))
+    builder.Services.AddCors(options => options.AddPolicy("StorefrontPages", policy =>
+        policy.WithOrigins(pagesOrigin).WithMethods("GET", "POST").WithHeaders("Content-Type", "X-NW-Request")));
+var auth = builder.Services.AddAuthentication();
+foreach (var role in new[] { "admin", "owner" })
+    auth.AddCookie(
+        role,
+        o =>
+        {
+            o.Cookie.Name = "nw." + role;
+            o.Cookie.HttpOnly = true;
+            o.Cookie.SameSite = SameSiteMode.Strict;
+            o.Cookie.SecurePolicy = cfg.GetValue<bool>("Cookies:Secure")
+                ? CookieSecurePolicy.Always
+                : CookieSecurePolicy.SameAsRequest;
+            o.ExpireTimeSpan = TimeSpan.FromHours(8);
+            o.SlidingExpiration = false;
+        }
+    );
+builder.Services.AddRateLimiter(o =>
+{
+    o.RejectionStatusCode = 429;
+    o.AddPolicy(
+        "auth",
+        ctx =>
+            RateLimitPartition.GetFixedWindowLimiter(
+                ctx.Connection.RemoteIpAddress?.ToString() ?? "local",
+                _ => new FixedWindowRateLimiterOptions
+                {
+                    PermitLimit = 50,
+                    Window = TimeSpan.FromMinutes(5),
+                }
+            )
+    );
+});
+builder
+    .Services.AddHttpClient("postex", c => c.Timeout = TimeSpan.FromSeconds(25))
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+builder.Services.AddHostedService<PostExWorker>();
 var app = builder.Build();
-app.UseCors();
-
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<StoreDb>();
     await db.Database.EnsureCreatedAsync();
-    // Keep existing prototype databases compatible when the delivery-city field is introduced.
-    await db.Database.ExecuteSqlRawAsync("ALTER TABLE \"Orders\" ADD COLUMN IF NOT EXISTS \"City\" text NOT NULL DEFAULT ''");
-    if (!await db.Products.AnyAsync())
-    {
-        db.Products.AddRange(
-            new Product { Name="Everyday Backpack", Description="A practical everyday carry bag.", Price=3490, Stock=18, Category="Accessories", ImageUrl="https://images.unsplash.com/photo-1553062407-98eeb64c6a62?w=900" },
-            new Product { Name="Minimal Watch", Description="Clean design for everyday wear.", Price=5990, Stock=12, Category="Accessories", ImageUrl="https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=900" },
-            new Product { Name="Wireless Headphones", Description="Comfortable wireless listening.", Price=7990, Stock=9, Category="Electronics", ImageUrl="https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=900" },
-            new Product { Name="Classic Sneakers", Description="Versatile everyday sneakers.", Price=6490, Stock=15, Category="Fashion", ImageUrl="https://images.unsplash.com/photo-1549298916-b41d501d3772?w=900" }
-        );
-        await db.SaveChangesAsync();
-    }
+    await db.Database.ExecuteSqlRawAsync(
+        await File.ReadAllTextAsync(
+            Path.Combine(AppContext.BaseDirectory, "Database", "upgrade.sql")
+        )
+    );
 }
-
-app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
-
-app.MapGet("/api/products", async (StoreDb db, string? search, string? category) =>
-{
-    var q = db.Products.AsNoTracking().Where(p => p.IsActive);
-    if (!string.IsNullOrWhiteSpace(search))
-        q = q.Where(p => p.Name.ToLower().Contains(search.ToLower()));
-    if (!string.IsNullOrWhiteSpace(category) && category != "All")
-        q = q.Where(p => p.Category == category);
-    return Results.Ok(await q.OrderBy(p => p.Name).ToListAsync());
-});
-
-app.MapGet("/api/categories", async (StoreDb db) =>
-    Results.Ok(await db.Products.Where(p => p.IsActive).Select(p => p.Category).Distinct().OrderBy(x => x).ToListAsync()));
-
-app.MapPost("/api/orders", async ([FromBody] CreateOrder request, StoreDb db) =>
-{
-    if (request.Items.Count == 0 || string.IsNullOrWhiteSpace(request.CustomerName) ||
-        string.IsNullOrWhiteSpace(request.Phone) || string.IsNullOrWhiteSpace(request.Address) || string.IsNullOrWhiteSpace(request.City))
-        return Results.BadRequest(new { message = "Name, phone, address and at least one item are required." });
-
-    await using var tx = await db.Database.BeginTransactionAsync();
-    var order = new Order {
-        CustomerName = request.CustomerName.Trim(),
-        Phone = request.Phone.Trim(),
-        Address = request.Address.Trim(),
-        City = request.City.Trim(),
-        PaymentMethod = "Cash on Delivery",
-        Status = "Pending"
-    };
-    foreach (var item in request.Items)
+if (!string.IsNullOrWhiteSpace(pagesOrigin))
+    app.UseWhen(ctx => ctx.Request.Path.StartsWithSegments("/api/stores"),
+        branch => branch.UseCors("StorefrontPages"));
+app.UseRateLimiter();
+app.Use(
+    async (ctx, next) =>
     {
-        if (item.Quantity < 1) return Results.BadRequest(new { message = "Invalid quantity." });
-        var product = await db.Products.FirstOrDefaultAsync(p => p.Id == item.ProductId && p.IsActive);
-        if (product is null) return Results.BadRequest(new { message = "A selected product is unavailable." });
-        if (product.Stock < item.Quantity) return Results.BadRequest(new { message = $"Insufficient stock for {product.Name}." });
-        product.Stock -= item.Quantity;
-        order.Items.Add(new OrderItem { ProductId = product.Id, ProductName = product.Name, UnitPrice = product.Price, Quantity = item.Quantity });
+        ctx.Response.Headers.CacheControl = "no-store";
+        if (ctx.Request.Method != "GET" && ctx.Request.Headers["X-NW-Request"] != "portal")
+        {
+            ctx.Response.StatusCode = 403;
+            return;
+        }
+        await next();
     }
-    order.Total = order.Items.Sum(i => i.UnitPrice * i.Quantity);
-    db.Orders.Add(order);
-    await db.SaveChangesAsync();
-    await tx.CommitAsync();
-    return Results.Created($"/api/orders/{order.Id}", new { order.Id, order.Total, order.Status });
-});
-
-app.MapGet("/api/admin/orders", async (StoreDb db, HttpContext ctx) =>
-{
-    if (!IsAdmin(ctx, app.Configuration)) return Results.Unauthorized();
-    return Results.Ok(await db.Orders.Include(o => o.Items).OrderByDescending(o => o.CreatedAt).ToListAsync());
-});
-
-app.MapPatch("/api/admin/orders/{id:int}/status", async (int id, UpdateStatus request, StoreDb db, HttpContext ctx) =>
-{
-    if (!IsAdmin(ctx, app.Configuration)) return Results.Unauthorized();
-    var allowed = new[] { "Pending", "Confirmed", "Processing", "Shipped", "Delivered", "Cancelled" };
-    if (!allowed.Contains(request.Status)) return Results.BadRequest(new { message = "Invalid status." });
-    var order = await db.Orders.FindAsync(id);
-    if (order is null) return Results.NotFound();
-    order.Status = request.Status;
-    await db.SaveChangesAsync();
-    return Results.Ok(order);
-});
-
-app.MapPost("/api/admin/products", async (ProductInput input, StoreDb db, HttpContext ctx) =>
-{
-    if (!IsAdmin(ctx, app.Configuration)) return Results.Unauthorized();
-    if (string.IsNullOrWhiteSpace(input.Name) || input.Price <= 0 || input.Stock < 0)
-        return Results.BadRequest(new { message = "Name, positive price and non-negative stock are required." });
-    var p = new Product { Name=input.Name.Trim(), Description=input.Description ?? "", Category=input.Category ?? "General",
-        Price=input.Price, Stock=input.Stock, ImageUrl=input.ImageUrl ?? "", IsActive=true };
-    db.Products.Add(p); await db.SaveChangesAsync();
-    return Results.Created($"/api/products/{p.Id}", p);
-});
-
-app.MapPut("/api/admin/products/{id:int}", async (int id, ProductInput input, StoreDb db, HttpContext ctx) =>
-{
-    if (!IsAdmin(ctx, app.Configuration)) return Results.Unauthorized();
-    var p = await db.Products.FindAsync(id);
-    if (p is null) return Results.NotFound();
-    if (string.IsNullOrWhiteSpace(input.Name) || input.Price <= 0 || input.Stock < 0)
-        return Results.BadRequest(new { message = "Invalid product data." });
-    p.Name=input.Name.Trim(); p.Description=input.Description ?? ""; p.Category=input.Category ?? "General";
-    p.Price=input.Price; p.Stock=input.Stock; p.ImageUrl=input.ImageUrl ?? "";
-    await db.SaveChangesAsync(); return Results.Ok(p);
-});
-
-app.MapDelete("/api/admin/products/{id:int}", async (int id, StoreDb db, HttpContext ctx) =>
-{
-    if (!IsAdmin(ctx, app.Configuration)) return Results.Unauthorized();
-    var p = await db.Products.FindAsync(id);
-    if (p is null) return Results.NotFound();
-    p.IsActive = false; await db.SaveChangesAsync(); return Results.NoContent();
-});
-
+);
+app.MapGet("/health", () => new { status = "ok" });
+var accounts = app.MapGroup("/api/auth").RequireRateLimiting("auth");
+accounts.MapPost(
+    "/signup",
+    async (Signup req, StoreDb db) =>
+    {
+        var email = req.Email?.Trim().ToLowerInvariant();
+        if (
+            !Rules.Email(email)
+            || !Rules.Password(req.Password)
+            || !Rules.Text(req.Name, 100)
+            || !Rules.Text(req.AdminName, 100)
+        )
+            return Rules.Bad(
+                "Enter a store name, admin name, valid email and a 12–128 character password."
+            );
+        var prefix = Regex.Replace(req.Name.Trim().ToLowerInvariant(), "[^a-z0-9]+", "-").Trim('-');
+        var shop = new Shop
+        {
+            Email = email!,
+            AdminName = req.AdminName.Trim(),
+            Name = req.Name.Trim(),
+            BrowserTitle = req.Name.Trim(),
+            Slug =
+                (prefix.Length > 0 ? prefix : "store") + "-" + Guid.NewGuid().ToString("N")[..10],
+        };
+        shop.PasswordHash = new PasswordHasher<Shop>().HashPassword(shop, req.Password);
+        db.Shops.Add(shop);
+        try
+        {
+            await db.SaveChangesAsync();
+        }
+        catch (DbUpdateException ex)
+            when (ex.InnerException is PostgresException { SqlState: "23505" })
+        {
+            return Results.Conflict(new { message = "This email is already registered." });
+        }
+        return Results.Json(new { shop.Slug, shop.Status }, statusCode: 201);
+    }
+);
+accounts.MapPost(
+    "/{role}/login",
+    async (string role, Login req, HttpContext ctx, StoreDb db) =>
+    {
+        var email = req.Email?.Trim().ToLowerInvariant();
+        if (!Rules.Email(email) || req.Password is null || req.Password.Length > 128)
+            return Results.Unauthorized();
+        List<Claim> claims = [];
+        if (role == "owner")
+        {
+            if (
+                email != ownerEmail
+                || !CryptographicOperations.FixedTimeEquals(
+                    SHA256.HashData(Encoding.UTF8.GetBytes(req.Password)),
+                    SHA256.HashData(Encoding.UTF8.GetBytes(ownerPassword!))
+                )
+            )
+                return Results.Unauthorized();
+            claims.Add(new("role", role));
+        }
+        else if (role == "admin")
+        {
+            var shop = await db.Shops.SingleOrDefaultAsync(s => s.Email == email);
+            if (
+                shop == null
+                || new PasswordHasher<Shop>().VerifyHashedPassword(
+                    shop,
+                    shop.PasswordHash,
+                    req.Password
+                ) == PasswordVerificationResult.Failed
+            )
+                return Results.Unauthorized();
+            if (!shop.Available)
+                return Rules.Denied(shop);
+            claims.Add(new("id", shop.Id.ToString()));
+            claims.Add(new("version", shop.SessionVersion.ToString()));
+        }
+        else
+            return Results.NotFound();
+        await ctx.SignInAsync(role, new ClaimsPrincipal(new ClaimsIdentity(claims, role)));
+        return Results.Ok();
+    }
+);
+app.MapPost(
+    "/api/auth/{role}/logout",
+    async (string role, HttpContext ctx) =>
+    {
+        if (role != "admin" && role != "owner")
+            return Results.NotFound();
+        await ctx.SignOutAsync(role);
+        return Results.NoContent();
+    }
+);
+var owner = app.MapGroup("/api/owner")
+    .AddEndpointFilter(
+        async (ctx, next) =>
+            (await ctx.HttpContext.AuthenticateAsync("owner")).Succeeded
+                ? await next(ctx)
+                : Results.Unauthorized()
+    );
+owner.MapGet(
+    "/stores",
+    async (StoreDb db) =>
+        (
+            await db
+                .Shops.AsNoTracking()
+                .OrderByDescending(s => s.CreatedAt)
+                .Select(s => new
+                {
+                    s.Id,
+                    s.Name,
+                    s.Slug,
+                    s.Email,
+                    s.AdminName,
+                    s.Status,
+                    s.Plan,
+                    s.ExpiresAt,
+                    s.CreatedAt,
+                })
+                .ToListAsync()
+        )
+);
+owner.MapPut(
+    "/stores/{id:int}",
+    async (int id, Decision req, StoreDb db) =>
+    {
+        await using var tx = await db.Database.BeginTransactionAsync();
+        var shop = await db
+            .Shops.FromSqlInterpolated($"SELECT * FROM \"Shops\" WHERE \"Id\"={id} FOR UPDATE")
+            .SingleOrDefaultAsync();
+        if (shop == null)
+            return Results.NotFound();
+        if (req.Action == "Activate")
+        {
+            var now = DateTime.UtcNow;
+            if (req.Plan is not ("Trial" or "Monthly" or "Yearly" or "Lifetime"))
+                return Rules.Bad("Choose a plan.");
+            shop.Status = "Active";
+            shop.Plan = req.Plan;
+            shop.ExpiresAt = req.Plan switch
+            {
+                "Trial" => now.AddDays(14),
+                "Monthly" => now.AddMonths(1),
+                "Yearly" => now.AddYears(1),
+                _ => null,
+            };
+        }
+        else if (req.Action is "Deactivate" or "Reject")
+        {
+            shop.Status = req.Action == "Reject" ? "Rejected" : "Inactive";
+        }
+        else
+            return Rules.Bad("Invalid owner action.");
+        shop.SessionVersion++;
+        await db.SaveChangesAsync();
+        await tx.CommitAsync();
+        return Results.Ok();
+    }
+);
+var admin = app.MapGroup("/api/admin")
+    .AddEndpointFilter((ctx, next) => Access.Gate(ctx, next, true));
+var store = app.MapGroup("/api/stores/{slug}")
+    .AddEndpointFilter((ctx, next) => Access.Gate(ctx, next, false));
+admin.MapGet("/access", () => Results.NoContent());
+app.MapGet(
+    "/api/directory",
+    async (StoreDb db) =>
+        await db
+            .Shops.Where(s =>
+                s.Status == "Active" && (s.ExpiresAt == null || s.ExpiresAt > DateTime.UtcNow)
+            )
+            .OrderBy(s => s.Name)
+            .Select(s => new { s.Name, s.Slug })
+            .ToListAsync()
+);
+Catalog.Map(admin, store);
+Sales.Map(admin, store);
 app.Run();
 
-static bool IsAdmin(HttpContext ctx, IConfiguration config)
+static class Access
 {
-    var expected = config["Admin:ApiKey"] ?? "";
-    var supplied = ctx.Request.Headers["X-Admin-Key"].ToString();
-    if (expected.Length < 24 || supplied.Length != expected.Length) return false;
-    return CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(expected), Encoding.UTF8.GetBytes(supplied));
-}
+    public static Shop Shop(HttpContext c) => (Shop)c.Items["shop"]!;
 
-class StoreDb(DbContextOptions<StoreDb> options) : DbContext(options)
-{
-    public DbSet<Product> Products => Set<Product>();
-    public DbSet<Order> Orders => Set<Order>();
-    public DbSet<OrderItem> OrderItems => Set<OrderItem>();
-    protected override void OnModelCreating(ModelBuilder b)
+    public static async ValueTask<object?> Gate(
+        EndpointFilterInvocationContext f,
+        EndpointFilterDelegate next,
+        bool admin
+    )
     {
-        b.Entity<Product>().Property(x => x.Price).HasPrecision(12,2);
-        b.Entity<Order>().Property(x => x.Total).HasPrecision(12,2);
-        b.Entity<OrderItem>().Property(x => x.UnitPrice).HasPrecision(12,2);
-        b.Entity<Order>().HasMany(x => x.Items).WithOne().HasForeignKey(x => x.OrderId).OnDelete(DeleteBehavior.Cascade);
+        var ctx = f.HttpContext;
+        var db = ctx.RequestServices.GetRequiredService<StoreDb>();
+        var write = ctx.Request.Method != "GET";
+        await using var tx = write ? await db.Database.BeginTransactionAsync() : null;
+        Shop? shop;
+        if (admin)
+        {
+            var auth = await ctx.AuthenticateAsync("admin");
+            if (!auth.Succeeded || !int.TryParse(auth.Principal?.FindFirstValue("id"), out var id))
+                return Results.Unauthorized();
+            shop = write
+                ? await db
+                    .Shops.FromSqlInterpolated(
+                        $"SELECT * FROM \"Shops\" WHERE \"Id\"={id} FOR UPDATE"
+                    )
+                    .SingleOrDefaultAsync()
+                : await db.Shops.FindAsync(id);
+            if (shop == null || !shop.Available)
+                return shop == null ? Results.Unauthorized() : Rules.Denied(shop);
+            if (shop.SessionVersion.ToString() != auth.Principal!.FindFirstValue("version"))
+                return Results.Unauthorized();
+        }
+        else
+        {
+            var slug = ctx.Request.RouteValues["slug"]?.ToString();
+            shop = write
+                ? await db
+                    .Shops.FromSqlInterpolated(
+                        $"SELECT * FROM \"Shops\" WHERE \"Slug\"={slug} FOR UPDATE"
+                    )
+                    .SingleOrDefaultAsync()
+                : await db.Shops.AsNoTracking().SingleOrDefaultAsync(s => s.Slug == slug);
+            if (shop == null || !shop.Available)
+                return Results.NotFound(new { message = "This store is unavailable." });
+        }
+        ctx.Items["shop"] = shop;
+        var result = await next(f);
+        if (tx != null && !(result is IStatusCodeHttpResult r && r.StatusCode >= 400))
+            await tx.CommitAsync();
+        return result;
     }
 }
-class Product { public int Id {get;set;} public string Name {get;set;}=""; public string Description {get;set;}="";
- public string Category {get;set;}="General"; public decimal Price {get;set;} public int Stock {get;set;}
- public string ImageUrl {get;set;}=""; public bool IsActive {get;set;}=true; }
-class Order { public int Id {get;set;} public string CustomerName {get;set;}=""; public string Phone {get;set;}="";
- public string Address {get;set;}=""; public string City {get;set;}=""; public string PaymentMethod {get;set;}="Cash on Delivery";
- public string Status {get;set;}="Pending"; public decimal Total {get;set;} public DateTime CreatedAt {get;set;}=DateTime.UtcNow;
- public List<OrderItem> Items {get;set;}=[]; }
-class OrderItem { public int Id {get;set;} public int OrderId {get;set;} public int ProductId {get;set;}
- public string ProductName {get;set;}=""; public decimal UnitPrice {get;set;} public int Quantity {get;set;} }
-record OrderLine(int ProductId, int Quantity);
-record CreateOrder(string CustomerName, string Phone, string Address, string City, List<OrderLine> Items);
-record UpdateStatus(string Status);
-record ProductInput(string Name, string? Description, string? Category, decimal Price, int Stock, string? ImageUrl);

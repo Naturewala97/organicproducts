@@ -5,9 +5,12 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="8.0.11" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.11">
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="8.0.10" />
   </ItemGroup>
+  <ItemGroup><None Update="Database/upgrade.sql" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" /></ItemGroup>
+  <ItemGroup><InternalsVisibleTo Include="PostExContract" /></ItemGroup>
 </Project>

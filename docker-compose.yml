@@ -4,43 +4,35 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-storedb}
       POSTGRES_USER: ${POSTGRES_USER:-storeuser}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-this-long-password}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-storeuser} -d ${POSTGRES_DB:-storedb}"]
       interval: 5s
       timeout: 5s
-      retries: 15
+      retries: 20
     restart: unless-stopped
-
   api:
     build: ./backend
+    env_file: .env
     environment:
       ASPNETCORE_URLS: http://+:8080
-      ConnectionStrings__Default: Host=db;Port=5432;Database=${POSTGRES_DB:-storedb};Username=${POSTGRES_USER:-storeuser};Password=${POSTGRES_PASSWORD:-change-this-long-password}
-      Admin__ApiKey: ${ADMIN_API_KEY:-replace-with-a-long-random-secret}
-      Integrations__PostEx__ApiUrl: ${POSTEX_API_URL:-}
-      Integrations__PostEx__ApiToken: ${POSTEX_API_TOKEN:-}
-      Integrations__PostEx__PickupAddressCode: ${POSTEX_PICKUP_ADDRESS_CODE:-}
-      Integrations__WhatsApp__PhoneNumberId: ${WHATSAPP_PHONE_NUMBER_ID:-}
-      Integrations__WhatsApp__AccessToken: ${WHATSAPP_ACCESS_TOKEN:-}
-      Integrations__WhatsApp__TemplateName: ${WHATSAPP_TEMPLATE_NAME:-order_confirmation}
-    ports:
-      - "8080:8080"
+      Owner__Email: ${Owner__Email:?Set Owner__Email in .env}
+      Owner__Password: ${Owner__Password:?Set Owner__Password in .env}
+      ConnectionStrings__Default: Host=db;Port=5432;Database=${POSTGRES_DB:-storedb};Username=${POSTGRES_USER:-storeuser};Password=${POSTGRES_PASSWORD}
     depends_on:
       db:
         condition: service_healthy
+    volumes:
+      - appkeys:/root/.aspnet/DataProtection-Keys
     restart: unless-stopped
-
   web:
     build: ./frontend
-    environment:
-      VITE_API_URL: http://localhost:8080
     ports:
-      - "5173:5173"
-    depends_on:
-      - api
-
+      - "127.0.0.1:${WEB_PORT:-5173}:80"
+    depends_on: [api]
+    restart: unless-stopped
 volumes:
   pgdata:
+  appkeys:
